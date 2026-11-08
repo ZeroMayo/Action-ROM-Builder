@@ -46,7 +46,7 @@ on:
 jobs:
   build-evox:
     runs-on: ubuntu-latest
-    timeout-minutes: 360 # Points to your 16GB RAM / 130GB Storage runner configuration
+    timeout-minutes: 960 # Points to your 16GB RAM / 130GB Storage runner configuration
     permissions:
       contents: write
     steps:
