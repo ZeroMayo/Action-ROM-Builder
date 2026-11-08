@@ -44,7 +44,7 @@ on:
         default: 'm evolution'
 
 jobs:
-  build-lineageos:
+  build-evox:
     runs-on: ubuntu-latest
     timeout-minutes: 360 # Points to your 16GB RAM / 130GB Storage runner configuration
     permissions:
@@ -146,7 +146,7 @@ jobs:
         fi
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
-    - name: Pre-Build Adjustments (Create Kernel Modules Dir & Compile)
+    - name: Compile
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
         
