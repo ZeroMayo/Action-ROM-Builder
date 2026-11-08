@@ -1,0 +1,214 @@
+name: Build LineageOS ROM
+
+
+on:
+  workflow_dispatch:
+    inputs:
+      SYNC_URL:
+        description: 'SYNC_URL'
+        required: true
+        default: 'https://github.com/Evolution-X/manifest.git'
+      MANIFEST_BRANCH:
+        description: 'MANIFEST_BRANCH'
+        required: true
+        default: 'cnb'
+      MANIFEST_TREE_URL:
+        description: 'MANIFEST_TREE_URL'
+        required: true
+        default: 'https://github.com/ZeroMayo/local_manifests.git'
+      DEVICE_TREE_BRANCH:
+        description: 'DEVICE_TREE_BRANCH'
+        required: true
+        default: 'lineage-24.0'
+      REPO_MANIFEST:
+        description: 'MANIFEST_PATH'
+        required: true
+        default: '.repo/local_manifests'
+      COMMON_TREE_URL:
+        description: 'COMMON_TREE_URL (if no common tree, leave blank)'
+        required: false
+      COMMON_PATH:
+        description: 'COMMON_PATH (if no common tree, leave blank)'
+        required: false
+      DEVICE_NAME:
+        description: 'DEVICE_NAME'
+        required: true
+        default: 'm23xq'
+      MAKEFILE_NAME:
+        description: 'MAKEFILE_NAME'
+        required: true
+        default: 'lineage_m23xq'
+      BUILD_TARGET:
+        description: 'BUILD_TARGET'
+        required: true
+        default: 'm evolution'
+
+jobs:
+  build-lineageos:
+    runs-on: ubuntu-latest
+    timeout-minutes: 360 # Points to your 16GB RAM / 130GB Storage runner configuration
+    permissions:
+      contents: write
+    steps:
+    - name: Check if sender is repository owner
+      if: github.event.repository.owner.login == github.event.sender.login
+      run: |
+        echo "Sender is the repository owner"
+    - name: Not the repository owner
+      if: github.event.repository.owner.login != github.event.sender.login
+      run: |
+        echo "Sender is not the repository owner"
+        exit 1
+
+    - name: Cleanup
+      uses: rokibhasansagar/slimhub_actions@main
+
+    - name: Initialize workspace
+      run: |
+        mkdir workspace
+        cd workspace
+        echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+      id: pwd
+
+    - name: Prepare the build environment
+      run: |
+        sudo apt update
+        sudo apt install git aria2 git-lfs -y
+        export JAVA_HOME=$(readlink -f $(which java))
+        git clone https://gitlab.com/OrangeFox/misc/scripts
+        cd scripts
+        sudo bash setup/android_build_env.sh
+        sed -i 's/cd -/cd ../g' setup/install_android_sdk.sh
+        sudo bash setup/install_android_sdk.sh
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Repo init (Extreme Architecture & Target Filtering)
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}
+        mkdir lineage
+        cd lineage
+        
+        # 🚀 THE ULTIMATE STRIP: Forcefully excludes TVs, wearables, cars, emulators, and tests
+        repo init -u ${{ github.event.inputs.SYNC_URL }} \
+          -b ${{ github.event.inputs.MANIFEST_BRANCH }} \
+          --depth=1 \
+          --git-lfs \
+          --partial-clone \
+          --clone-filter=blob:limit=10M \
+          --groups=default,-mips,-x86,-darwin,-notdefault,-device,-car,-wear,-tv,-simulator,-tests,-vts,-cts
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+
+    - name: Clone local manifest
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
+        git clone ${{ github.event.inputs.MANIFEST_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ${{ github.event.inputs.REPO_MANIFEST }} --depth=1
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Clone common tree
+      if: |
+        github.event.inputs.COMMON_TREE_URL != null && github.event.inputs.COMMON_TREE_URL != ''
+        && github.event.inputs.COMMON_PATH != null && github.event.inputs.COMMON_PATH != ''
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
+        git clone ${{ github.event.inputs.COMMON_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ./${{ github.event.inputs.COMMON_PATH }} --depth=1
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Repo sync
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
+        repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags --optimized-fetch
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Set Swap Space
+      uses: pierotofy/set-swap-space@master
+      with:
+       swap-size-gb: 28
+        
+        free -h
+        df -h
+        
+    - name: Configure git identity
+      run: |
+        git config --global user.email "seonghyeon802@gmail.com"
+        git config --global user.name "ZeroMayo"
+        
+    - name: Fix Audio Android.bp select type condition
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
+        AUDIO_BP="hardware/interfaces/audio/common/all-versions/default/Android.bp"
+        if [ -f "$AUDIO_BP" ]; then
+            echo "🔧 Fixing Audio select type condition..."
+            sed -i 's/"true":/true:/g' "$AUDIO_BP"
+            echo "✅ Audio Android.bp patched!"
+        else
+            echo "⚠️ Audio Android.bp not found, skipping patch."
+        fi
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Pre-Build Adjustments (Create Kernel Modules Dir & Compile)
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
+        
+        # 🚀 THE CRITICAL SOURCE PATCH: 
+        # Delete the unused Trusty component that is causing the missing VTS dependency crash
+        echo "🔧 Patching out unused Trusty dependencies..."
+        rm -rf system/core/trusty || true
+        rm -rf trusty || true
+        
+        source build/envsetup.sh
+        
+        # =================================================================
+        # 💾 STORAGE & RAM CONTROLS
+        # =================================================================
+        export USE_CCACHE=0
+        export WITH_DEXPREOPT=false
+        export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=false
+        export DISABLE_PROGUARD=true
+        export WITHOUT_CHECK_API=true
+        export BUILD_FROM_SOURCE_STUB=true
+        export ZSTD_CLEVEL=19
+        export LZ4_CLEVEL=9
+        export DISABLE_ARTIFACT_PATH_REQUIREMENTS=true
+        export NINJA_ARGS="-j4"
+        export LDFLAGS="-Wl,--threads=1"
+        export RBE_num_local_workers=1
+        export METALAVA_MAX_HEAP_SIZE=2g
+        export _JAVA_OPTIONS="-Xmx3g -XX:MaxMetaspaceSize=512m"
+        export NINJA_STATUS="[%p %f/%t] "
+        
+        # Initialize targeting
+        lunch ${{ github.event.inputs.MAKEFILE_NAME }}
+
+        # =================================================================
+        # 🚀 THE CRITICAL WATCHDOG BYPASS (KEEP-ALIVE LOOP)
+        # =================================================================
+        bash -c 'while true; do echo "⏳ [WATCHDOG KEEP-ALIVE] Soong is actively parsing blueprints on SSD Swap..."; sleep 60; done' &
+        WATCHDOG_PID=$!
+
+        # Execute the build target
+        ${{ github.event.inputs.BUILD_TARGET }} $NINJA_ARGS ShowCommands=true
+
+        # Kill the watchdog loop once compilation finishes cleanly
+        kill $WATCHDOG_PID || true
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+
+    - name: Check the output directory before uploading
+      run: |
+        ls -al ${{ steps.pwd.outputs.workspace-folder }}/lineage/out/target/product/
+        echo
+        ls -al ${{ steps.pwd.outputs.workspace-folder }}/lineage/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/
+
+    - name: Upload to Release
+      uses: softprops/action-gh-release@v1
+      with:
+        files: |
+          ${{ steps.pwd.outputs.workspace-folder }}/lineage/out/target/product/${{ github.event.inputs.DEVICE_NAME }}/*.zip
+        name: ${{ github.event.inputs.DEVICE_NAME }}-${{ github.run_id }}
+        tag_name: ${{ github.run_id }}
+        body: |
+          Manifest: ${{ github.event.inputs.MANIFEST_BRANCH }}
+          Device: ${{ github.event.inputs.DEVICE_NAME }}
+          Target: ${{ github.event.inputs.BUILD_TARGET }}
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
