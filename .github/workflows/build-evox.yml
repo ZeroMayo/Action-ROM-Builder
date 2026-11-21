@@ -23,7 +23,7 @@ on:
       REPO_MANIFEST:
         description: 'MANIFEST_PATH'
         required: true
-        default: 'local_manifests'
+        default: '.repo/local_manifests'
       COMMON_TREE_URL:
         description: 'COMMON_TREE_URL (if no common tree, leave blank)'
         required: false
