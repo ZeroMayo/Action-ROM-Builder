@@ -159,7 +159,12 @@ jobs:
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
         repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      
+        
+    - name: Configure git identity
+      run: |
+        git config --global user.email "seonghyeon802@gmail.com"
+        git config --global user.name "ZeroMayo"
+             
     - name: Setup the keys
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
@@ -167,11 +172,6 @@ jobs:
         cd vendor/evolution-priv/keys
         ./keys.sh
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-        
-    - name: Configure git identity
-      run: |
-        git config --global user.email "seonghyeon802@gmail.com"
-        git config --global user.name "ZeroMayo"
         
     - name: Fix Audio Android.bp select type condition
       run: |
