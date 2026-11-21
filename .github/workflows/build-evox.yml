@@ -63,6 +63,19 @@ jobs:
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
 
+    # `maximize-build-space` runs `sudo docker image prune` for remove-docker-images,
+    # which aborts with 'sudo: docker: command not found' when the CLI is absent.
+    # Prune defensively here instead.
+    - name: Remove Docker leftovers
+      run: |
+        if command -v docker >/dev/null 2>&1; then
+          sudo docker image prune --all --force || true
+        else
+          echo "docker CLI not available - skipping image prune"
+        fi
+        sudo rm -rf /var/lib/docker /var/lib/containerd 2>/dev/null || true
+        df -h /
+
     # ---------------------------------------------------------------------------
     # 🚀 THE REAL FIX FOR "no space left on device"
     # ubuntu-latest only gives ~14-22 GB free on / , while the extra ~74 GB disk
@@ -83,7 +96,10 @@ jobs:
         remove-android: 'true'         # ~11 GB (the setup script installs its own SDK)
         remove-haskell: 'true'         # ~2.7 GB
         remove-codeql: 'true'          # ~5.4 GB
-        remove-docker-images: 'true'   # ~3 GB
+        # Must stay 'false': the action calls `sudo docker image prune`, which fails
+        # with "docker: command not found" on runners without the Docker CLI.
+        # Docker leftovers are removed by the step above instead.
+        remove-docker-images: 'false'
 
     - name: Initialize workspace
       run: |
