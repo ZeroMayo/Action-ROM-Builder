@@ -63,17 +63,41 @@ jobs:
     - name: Cleanup
       uses: rokibhasansagar/slimhub_actions@main
 
+    # ---------------------------------------------------------------------------
+    # 🚀 THE REAL FIX FOR "no space left on device"
+    # ubuntu-latest only gives ~14-22 GB free on / , while the extra ~74 GB disk
+    # mounted at /mnt is unused. This action frees the preinstalled junk AND merges
+    # the free space of / with /mnt into one LVM volume that is mounted over
+    # $GITHUB_WORKSPACE, so the source tree, out/ and ccache all live on ~100 GB.
+    # It must run BEFORE anything writes into the workspace (it replaces it).
+    # ---------------------------------------------------------------------------
+    - name: Maximize build disk space
+      uses: easimon/maximize-build-space@master
+      with:
+        # Keep 14 GB free on / for the JDK/apt/SDK installs done by the steps below
+        root-reserve-mb: 14336
+        temp-reserve-mb: 1024
+        # Swap on the merged LVM volume (no longer eats the root filesystem)
+        swap-size-mb: 12288
+        remove-dotnet: 'true'          # ~17 GB
+        remove-android: 'true'         # ~11 GB (the setup script installs its own SDK)
+        remove-haskell: 'true'         # ~2.7 GB
+        remove-codeql: 'true'          # ~5.4 GB
+        remove-docker-images: 'true'   # ~3 GB
+
     - name: Initialize workspace
       run: |
-        mkdir workspace
+        mkdir -p workspace
         cd workspace
         echo "workspace-folder=$(pwd)" >> $GITHUB_OUTPUT
+        echo "📦 Workspace: $(pwd)"
+        df -h .
       id: pwd
 
     - name: Prepare the build environment
       run: |
         sudo apt update
-        sudo apt install git aria2 git-lfs -y
+        sudo apt install git aria2 git-lfs ccache -y
         export JAVA_HOME=$(readlink -f $(which java))
         git clone https://gitlab.com/OrangeFox/misc/scripts
         cd scripts
@@ -104,6 +128,12 @@ jobs:
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
         git clone ${{ github.event.inputs.MANIFEST_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ${{ github.event.inputs.REPO_MANIFEST }} --depth=1
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      
+    - name: Clone signing keys
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
+        git clone https://github.com/Evolution-X/vendor_evolution-priv_keys-template vendor/evolution-priv/keys
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone common tree
       if: |
@@ -117,7 +147,7 @@ jobs:
     - name: Repo sync
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
-        repo sync -c -j$(nproc) --force-sync --no-clone-bundle --no-tags --optimized-fetch
+        repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
         
     - name: Configure git identity
@@ -153,8 +183,18 @@ jobs:
         # =================================================================
         # 💾 STORAGE & RAM CONTROLS
         # =================================================================
+        echo "💽 Disk space before build:"
+        df -h .
+        du -sh .repo 2>/dev/null || true
+
+        # ccache must never be allowed to eat the space the build needs:
+        # a 50G cache on a ~100G volume guarantees an ENOSPC halfway through.
         export USE_CCACHE=1
         export CCACHE_DIR=${{ steps.pwd.outputs.workspace-folder }}/ccache/
+        export CCACHE_EXEC=$(command -v ccache)
+        export CCACHE_COMPRESS=true
+        export CCACHE_COMPRESSLEVEL=1
+        export CCACHE_MAXSIZE=8G
         export WITH_DEXPREOPT=false
         export WITH_DEXPREOPT_BOOT_IMG_AND_SYSTEM_SERVER_ONLY=false
         export DISABLE_PROGUARD=true
@@ -169,7 +209,16 @@ jobs:
         export METALAVA_MAX_HEAP_SIZE=2g
         export _JAVA_OPTIONS="-Xmx3g -XX:MaxMetaspaceSize=512m"
         export NINJA_STATUS="[%p %f/%t] "
-        ccache -M 50G
+        ccache -M 8G || true
+        ccache -z || true
+
+        # Fail early with a clear message instead of a cryptic ENOSPC hours later
+        AVAIL_GIB=$(df -BG --output=avail . | tail -1 | tr -dc '0-9')
+        AVAIL_GIB=${AVAIL_GIB:-0}
+        echo "📦 Available build space: ${AVAIL_GIB} GiB"
+        if [ "${AVAIL_GIB}" -lt 40 ]; then
+          echo "::warning::Less than 40 GiB free - this build will likely run out of disk space."
+        fi
         
         # Initialize targeting
         lunch ${{ github.event.inputs.MAKEFILE_NAME }}
