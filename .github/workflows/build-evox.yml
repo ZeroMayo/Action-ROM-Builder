@@ -149,6 +149,8 @@ jobs:
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
         git clone https://github.com/Evolution-X/vendor_evolution-priv_keys-template vendor/evolution-priv/keys
+        cd vendor/evolution-priv/keys
+        ./keys.sh
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone common tree
