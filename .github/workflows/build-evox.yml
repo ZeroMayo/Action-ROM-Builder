@@ -144,14 +144,6 @@ jobs:
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
         git clone ${{ github.event.inputs.MANIFEST_TREE_URL }} -b ${{ github.event.inputs.DEVICE_TREE_BRANCH }} ${{ github.event.inputs.REPO_MANIFEST }} --depth=1
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
-      
-    - name: Clone signing keys
-      run: |
-        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
-        git clone https://github.com/Evolution-X/vendor_evolution-priv_keys-template vendor/evolution-priv/keys
-        cd vendor/evolution-priv/keys
-        ./keys.sh
-      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
 
     - name: Clone common tree
       if: |
@@ -166,6 +158,14 @@ jobs:
       run: |
         cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
         repo sync -c -j$(nproc --all) --force-sync --no-clone-bundle --no-tags --optimized-fetch
+      working-directory: ${{ steps.pwd.outputs.workspace-folder }}
+      
+    - name: Setup the keys
+      run: |
+        cd ${{ steps.pwd.outputs.workspace-folder }}/lineage/
+        git clone https://github.com/Evolution-X/vendor_evolution-priv_keys-template vendor/evolution-priv/keys
+        cd vendor/evolution-priv/keys
+        ./keys.sh
       working-directory: ${{ steps.pwd.outputs.workspace-folder }}
         
     - name: Configure git identity
